@@ -15,6 +15,7 @@ a separate repository: https://github.com/Lasagne/Recipes
 from __future__ import print_function
 
 import sys
+import gc
 import os
 import time
 
@@ -25,12 +26,17 @@ import theano.tensor as T
 import lasagne
 from data_utils import MRIDataIterator
 
-def build_cnn(input_var=None):
-    # As a third model, we'll create a CNN of two convolution + pooling stages
-    # and a fully-connected hidden layer in front of the output layer.
+def build_cnn(input_var=None, numer_of_buckets=10):
+    """number_of_buckets:   Is the number of histogram buckets we have created.
+                            We treat these like layers for the convolution,
+                            filling in the missing layers with 0s. We also throw
+                            out slices that are probably from the same location
+    """
 
     # Input layer, as usual:
-    network = lasagne.layers.InputLayer(shape=(None, 30, 64, 64),
+    # (number of frames in cardiac cycle x number_of_buckets x image_width x image_height)
+    # (30 x 10 x 64 x 64)
+    network = lasagne.layers.InputLayer(shape=(30, numer_of_buckets, 64, 64),
                                         input_var=input_var)
     # This time we do not apply input dropout, as it tends to work less well
     # for convolutional layers.
@@ -53,6 +59,29 @@ def build_cnn(input_var=None):
             network, num_filters=32, filter_size=(5, 5),
             nonlinearity=lasagne.nonlinearities.rectify)
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
+
+    network = lasagne.layers.FlattenLayer(network, 2)
+    #should now be (30 x (64*64*10))
+
+    print("After flatter, dims: {}".format(network.output_shape))
+
+    # need to get it to (1 x 30 x (64*64*10))
+    network = lasagne.layers.ReshapeLayer(network, (-1, [0], [1]))
+
+    print("After reshape, dims: {}".format(network.output_shape))
+
+    network = lasagne.layers.LSTMLayer(
+        network, 512, grad_clipping=100,
+        nonlinearity=lasagne.nonlinearities.tanh)
+
+    print("After lstm, dims: {}".format(network.output_shape))
+
+    # The l_forward layer creates an output of dimension (batch_size, SEQ_LENGTH, N_HIDDEN)
+    # Since we are only interested in the final prediction, we isolate that quantity and feed it to the next layer.
+    # The output of the sliced layer will then be of size (batch_size, N_HIDDEN)
+    network = lasagne.layers.SliceLayer(network, -1, 1)
+
+    print("After slice, dims: {}".format(network.output_shape))
 
     # A fully-connected layer of 256 units with 50% dropout on its inputs:
     network = lasagne.layers.DenseLayer(
@@ -135,11 +164,12 @@ def main(num_epochs=1):
             gc.collect()
             print("Training index %s" % training_index)
             try:
-                inputs, targets = mriIter.retrieve_data_batch(training_index)
+                inputs, targets = mriIter.retrieve_data_batch_by_layer_buckets(training_index)
             except:
                 print("Skipping because failed to retrieve data")
                 continue
             systole, diastole = targets
+            print("Inputs shape: {}".format(inputs.shape))
             train_err += train_fn(inputs, systole)
             train_batches += 1
             training_index += 1
@@ -152,7 +182,7 @@ def main(num_epochs=1):
             gc.collect()
             print("Validation index %s" % validation_index)
             try:
-                inputs, targets = mriIter.retrieve_data_batch(validation_index)
+                inputs, targets = mriIter.retrieve_data_batch_by_layer_buckets(validation_index)
             except:
                 print("Skipping because failed to retrieve data")
                 continue

@@ -24,6 +24,15 @@ class MRIDataIterator(object):
         self.current_iter_position = 0
         self.PATIENT_RANGE_INCLUSIVE = (1,500)
         self.last_training_index = int(percent_validation * self.PATIENT_RANGE_INCLUSIVE[1])
+        self.histogram_bins = self.get_histogram_bins()
+
+    def get_histogram_bins(self, attribute_name='SliceLocation'):
+        dicom_images = []
+        for key, value in self.frames.iteritems():
+            for sax_frame in value:
+                dicom_images.append(dicom.read_file(sax_frame[0]))
+        numbers, bins = np.histogram([getattr(image, attribute_name) for image in dicom_images], 10)
+        return bins
 
     def get_frames(self, root_path):
        """Get path to all the frame in view SAX and contain complete frames"""
@@ -43,19 +52,13 @@ class MRIDataIterator(object):
 
        return ret
 
-    def one_hot(self, label):
-        """
-        Returns a 1-hot encoding of the label
-        """
-        return np.eye(600, dtype=np.int32)[int(label)]
-
     def get_label_map(self, fname):
        labelmap = {}
        fi = open(fname)
        fi.readline()
        for line in fi:
            arr = line.split(',')
-           labelmap[int(arr[0])] = [float(x) for x in arr[1:]]
+           labelmap[int(arr[0])] = [np.float64(x) for x in arr[1:]]
        return labelmap
 
     def preproc(self, img, size):
@@ -80,7 +83,36 @@ class MRIDataIterator(object):
     def has_more_validation_data(self, index):
         return index <= self.PATIENT_RANGE_INCLUSIVE[1]
 
-    def retrieve_data_batch(self, index = None):
+    def retrieve_data_batch_by_layer_buckets(self, index=None):
+        """ Returns a batch in format (30, num_bins-1, 64, 64) which
+            puts slices together, padding empty bucket layers with 0s"""
+
+        # TODO: should incorporate slice thickness data in case a slice overlaps
+        # several buckets?
+        if not self.labels or not self.frames:
+            raise ValueError("Frames or labels not set")
+        if not index:
+            index = self.current_iter_position
+            self.current_iter_position += 1
+
+        if self.PATIENT_RANGE_INCLUSIVE[0] > index > self.PATIENT_RANGE_INCLUSIVE[1]:
+            raise ValueError("Index out of bounds for data.")
+
+        #TODO: fix this
+        patient_frames = self.frames[index]
+        data_array = np.zeros((30, len(self.histogram_bins)-1, 64, 64))
+        for sax_set in patient_frames:
+            data = []
+            i = 0
+            for path in sax_set:
+                f = dicom.read_file(path)
+                img = self.preproc(f.pixel_array.astype(float) / np.max(f.pixel_array), 64)
+                data_array[i][np.digitize(f.SliceLocation, self.histogram_bins, right=True)][:][:] = np.array(img, dtype=np.float32)
+                i += 1
+
+        return data_array, [ np.full(len(patient_frames), np.float64(x), dtype=np.float32) for x in self.labels[index]]
+
+    def retrieve_data_batch_with_time_as_channel(self, index = None):
         """ Minibatched data retrieval of fMRI images, returns a numpy array
         of (num_sax_images x 30 x 64 x 64) and the equivalent label (arr, label)
         loaded into memory with the 30 being the channel related to fMRI slices
@@ -104,18 +136,12 @@ class MRIDataIterator(object):
                 f = dicom.read_file(path)
                 img = self.preproc(f.pixel_array.astype(float) / np.max(f.pixel_array), 64)
                 data.append(img)
-            data = np.array(data, dtype=np.int32)
+            data = np.array(data, dtype=np.float32)
             # data = data.reshape(data.size)
             data_array[sax_index][:][:][:] = data
             sax_index += 1
 
-        # systole_repeated = np.zeros((len(patient_frames), 600), dtype=np.int32)
-        # systole_repeated[:,:] = self.one_hot(self.labels[index][0])
-
-        # diastole_repeated = np.zeros((len(patient_frames), 600), dtype=np.int32)
-        # diastole_repeated[:,:] = self.one_hot(self.labels[index][1])
-
-        return data_array, [ np.full(len(patient_frames), int(x), dtype=np.int32) for x in self.labels[index]]
+        return data_array, [ np.full(len(patient_frames), int(x), dtype=np.float32) for x in self.labels[index]]
 
     # TODO: modify this for writing the validation labels
     def write_label_csv(self, fname, frames, label_map):
@@ -127,26 +153,3 @@ class MRIDataIterator(object):
            else:
                fo.write("%d,0,0\n" % index)
        fo.close()
-
-
-
-# # Load the list of all the training frames, and shuffle them
-# # Shuffle the training frames
-# random.seed(10)
-# train_frames = get_frames("./data/train")
-# random.shuffle(train_frames)
-#
-# # Write the corresponding label information of each frame into file.
-# write_label_csv("./train-label.csv", train_frames, get_label_map("./data/train.csv"))
-# # write_label_csv("./validate-label.csv", validate_frames, None)
-#
-# # Dump the data of each frame into a CSV file, apply crop to 64 preprocessor
-# train_lst = write_data_csv("./train-64x64-data.csv", train_frames, lambda x: crop_resize(x, 64))
-# # valid_lst = write_data_csv("./validate-64x64-data.csv", validate_frames, lambda x: crop_resize(x, 64))
-#
-# # Generate local train/test split, which you could use to tune your model locally.
-# train_index = np.loadtxt("./train-label.csv", delimiter=",")[:,0].astype("int")
-# train_set, test_set = local_split(train_index)
-# split_to_train = [x in train_set for x in train_index]
-# split_csv("./train-label.csv", split_to_train, "./local_train-label.csv", "./local_test-label.csv")
-# split_csv("./train-64x64-data.csv", split_to_train, "./local_train-64x64-data.csv", "./local_test-64x64-data.csv")
