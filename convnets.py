@@ -83,7 +83,7 @@ def build_cnn(input_var=None, numer_of_buckets=10):
 
     print("After slice, dims: {}".format(network.output_shape))
 
-    # A fully-connected layer of 256 units with 50% dropout on its inputs:
+    # A fully-connected layer of 1024 units with 50% dropout on its inputs:
     network = lasagne.layers.DenseLayer(
             lasagne.layers.dropout(network, p=.5),
             num_units=1024,
@@ -117,8 +117,8 @@ def main(num_epochs=1):
     # Create a loss expression for training, i.e., a scalar objective we want
     # to minimize (for our multi-class problem, it is the cross-entropy loss):
     prediction = lasagne.layers.get_output(network)
-    loss = lasagne.objectives.categorical_crossentropy(prediction, target_var)
-    loss = loss.mean()
+    loss = theano.tensor.nnet.categorical_crossentropy(prediction, target_var).mean()
+    # loss = loss.mean()
     # We could add some weight decay as well here, see lasagne.regularization.
 
     # Create update expressions for training, i.e., how to modify the
@@ -144,7 +144,7 @@ def main(num_epochs=1):
 
     # Compile a function performing a training step on a mini-batch (by giving
     # the updates dictionary) and returning the corresponding training loss:
-    train_fn = theano.function([input_var, target_var], loss, updates=updates)
+    train_fn = theano.function([input_var, target_var], loss, updates=updates, allow_input_downcast=True)
 
     # Compile a second function computing the validation loss and accuracy:
     val_fn = theano.function([input_var, target_var], [test_loss, test_acc])
@@ -164,11 +164,13 @@ def main(num_epochs=1):
             gc.collect()
             print("Training index %s" % training_index)
             try:
-                inputs, targets = mriIter.retrieve_data_batch_by_layer_buckets(training_index)
+                inputs, systole, diastole = mriIter.retrieve_data_batch_by_layer_buckets(training_index)
             except:
                 print("Skipping because failed to retrieve data")
+                training_index += 1
                 continue
-            systole, diastole = targets
+            # systole, diastole = targets
+            # import pdb;pdb.set_trace()
             print("Inputs shape: {}".format(inputs.shape))
             train_err += train_fn(inputs, systole)
             train_batches += 1
@@ -182,11 +184,11 @@ def main(num_epochs=1):
             gc.collect()
             print("Validation index %s" % validation_index)
             try:
-                inputs, targets = mriIter.retrieve_data_batch_by_layer_buckets(validation_index)
+                inputs, systole, diastole = mriIter.retrieve_data_batch_by_layer_buckets(validation_index)
             except:
                 print("Skipping because failed to retrieve data")
                 continue
-            systole, diastole = targets
+            # systole, diastole = targets
             err, acc = val_fn(inputs, systole)
             val_err += err
             val_acc += acc

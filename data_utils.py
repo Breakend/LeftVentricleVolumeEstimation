@@ -11,6 +11,10 @@ import numpy as np
 import dicom
 from skimage import io, transform
 
+# Extra, non-specific data utilities
+def one_hot(size, value):
+    return np.eye(size)[value]
+
 class MRIDataIterator(object):
     """ Iterates over the fMRI scans and returns batches of test and validation
     data. Needed to load into memory one batch at a time."""
@@ -58,7 +62,7 @@ class MRIDataIterator(object):
        fi.readline()
        for line in fi:
            arr = line.split(',')
-           labelmap[int(arr[0])] = [np.float64(x) for x in arr[1:]]
+           labelmap[int(arr[0])] = [np.float32(x) for x in arr[1:]]
        return labelmap
 
     def preproc(self, img, size):
@@ -106,11 +110,15 @@ class MRIDataIterator(object):
             i = 0
             for path in sax_set:
                 f = dicom.read_file(path)
-                img = self.preproc(f.pixel_array.astype(float) / np.max(f.pixel_array), 64)
-                data_array[i][np.digitize(f.SliceLocation, self.histogram_bins, right=True)][:][:] = np.array(img, dtype=np.float32)
+                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64)
+                bindex = np.clip(np.digitize(f.SliceLocation, self.histogram_bins, right=True),0,len(self.histogram_bins)-2)
+                data_array[i][bindex][:][:] = np.array(img, dtype=np.float32)
                 i += 1
 
-        return data_array, [ np.full(len(patient_frames), np.float64(x), dtype=np.float32) for x in self.labels[index]]
+        # data, systolic, diastolic
+        # print("Systolic: {}".format()
+        # print(np.array(np.float32(self.labels[index][0])))
+        return data_array, np.array([np.float32(self.labels[index][0])]), np.array([np.float32(self.labels[index][1])]) #one_hot(600, self.labels[index][0]), one_hot(600, self.labels[index][0])#[ np.full(len(patient_frames), np.float32(x), dtype=np.float32) for x in self.labels[index]]
 
     def retrieve_data_batch_with_time_as_channel(self, index = None):
         """ Minibatched data retrieval of fMRI images, returns a numpy array
@@ -134,14 +142,14 @@ class MRIDataIterator(object):
             data = []
             for path in sax_set:
                 f = dicom.read_file(path)
-                img = self.preproc(f.pixel_array.astype(float) / np.max(f.pixel_array), 64)
+                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64)
                 data.append(img)
             data = np.array(data, dtype=np.float32)
             # data = data.reshape(data.size)
             data_array[sax_index][:][:][:] = data
             sax_index += 1
 
-        return data_array, [ np.full(len(patient_frames), int(x), dtype=np.float32) for x in self.labels[index]]
+        return data_array, [ np.full(len(patient_frames), np.float32(x), dtype=np.float32) for x in self.labels[index]]
 
     # TODO: modify this for writing the validation labels
     def write_label_csv(self, fname, frames, label_map):
