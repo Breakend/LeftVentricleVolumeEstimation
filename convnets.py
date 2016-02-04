@@ -1,28 +1,17 @@
 #!/usr/bin/env python
 
-"""
-Usage example employing Lasagne for digit recognition using the MNIST dataset.
-
-This example is deliberately structured as a long flat file, focusing on how
-to use Lasagne, instead of focusing on writing maximally modular and reusable
-code. It is used as the foundation for the introductory Lasagne tutorial:
-http://lasagne.readthedocs.org/en/latest/user/tutorial.html
-
-More in-depth examples and reproductions of paper results are maintained in
-a separate repository: https://github.com/Lasagne/Recipes
-"""
-
 from __future__ import print_function
 
 import sys
 import gc
 import os
 import time
+import yaml
+import traceback
 
 import numpy as np
 import theano
 import theano.tensor as T
-import pandas as pd
 
 import lasagne
 from data_utils import MRIDataIterator
@@ -174,11 +163,17 @@ def compose_functions(scope="default"):
 def main(num_epochs=1):
     # Load the dataset
     print("Creating data iterator...")
-    mriIter = MRIDataIterator("/Users/Breakend/Documents/datasets/sciencebowl2015/train", "/Users/Breakend/Documents/datasets/sciencebowl2015/train.csv")
+    with open("config.yml", 'r') as ymlfile:
+        cfg = yaml.load(ymlfile)
+    train_dir = cfg['dataset_paths']['train_data']
+    train_labels = cfg['dataset_paths']['train_labels'] 
+
+    mriIter = MRIDataIterator(train_dir, train_labels)
 
     network, train_fn, val_fn = compose_functions("systole") #systole
     network_dia, train_fn_dia, val_fn_dia = compose_functions("diastole")
 
+    import pdb;pdb.set_trace()
     # Finally, launch the training loop.
     print("Starting training...")
     # We iterate over epochs:
@@ -187,8 +182,8 @@ def main(num_epochs=1):
         train_err_sys = 0
         train_err_dia = 0
         train_batches = 0
-        training_index = 1
-        validation_index = mriIter.last_training_index + 1
+        training_index = 395#1
+        validation_index = 500#mriIter.last_training_index + 1
 
         start_time = time.time()
         while mriIter.has_more_training_data(training_index):
@@ -196,8 +191,9 @@ def main(num_epochs=1):
             print("Training index %s" % training_index)
             try:
                 inputs, systole, diastole = mriIter.retrieve_data_batch_by_layer_buckets(training_index)
-            except:
+            except Exception:
                 print("Skipping because failed to retrieve data")
+                print(traceback.format_exc())
                 training_index += 1
                 continue
             # systole, diastole = targets
@@ -219,8 +215,10 @@ def main(num_epochs=1):
             print("Validation index %s" % validation_index)
             try:
                 inputs, systole, diastole = mriIter.retrieve_data_batch_by_layer_buckets(validation_index)
-            except:
+            except Exception:
                 print("Skipping because failed to retrieve data")
+                print(traceback.format_exc())
+                validation_index += 1
                 continue
             # systole, diastole = targets
             err, prediction = val_fn(inputs, systole)
@@ -230,14 +228,15 @@ def main(num_epochs=1):
             sq_dists = (prediction[0] - heavy)**2
             # print(prediction.shape)
             val_err_sys += err
-            val_acc_sys += sum(sq_dists)
+            val_acc_sys += (sum(sq_dists) / 600.)
 
             err, prediction = val_fn_dia(inputs, systole)
+            print(prediction)
             v = np.array(range(prediction.shape[1]))
             heavy = (v >= systole[0])
             sq_dists = (prediction[0] - heavy)**2
             val_err_dia += err
-            val_acc_dia += sum(sq_dists)
+            val_acc_dia += (sum(sq_dists) / 600.)
             val_batches += 1
             validation_index += 1
 
@@ -246,8 +245,10 @@ def main(num_epochs=1):
             epoch + 1, num_epochs, time.time() - start_time))
         # print("  training loss:\t\t{:.6f}".format(train_err / train_batches))
         # print("  validation loss:\t\t{:.6f}".format(val_err / val_batches))
+        print("Validation Sum Sqrts Systolic: {}".format(val_acc_sys))
+        print("Validation Sum Sqrts Diastolic: {}".format(val_acc_dia))
         print("CRPS:\t\t{:.2f} %".format(
-            (val_acc_sys + val_acc_dia) / (val_batches * 600.) * .5))
+            (val_acc_sys + val_acc_dia) / (val_batches) * .5))
 
 
     # Optionally, you could now dump the network weights to a file like this:
@@ -265,7 +266,7 @@ if __name__ == '__main__':
         print("Trains a neural network on MNIST using Lasagne.")
         print("Usage: %s [MODEL [EPOCHS]]" % sys.argv[0])
         print()
-        print("EPOCHS: number of training epochs to perform (default: 500)")
+        print("EPOCHS: number of training epochs to perform (default: 1)")
     else:
         kwargs = {}
         if len(sys.argv) > 1:

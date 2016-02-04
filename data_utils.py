@@ -80,8 +80,8 @@ class MRIDataIterator(object):
        crop_img = img[yy : yy + short_egde, xx : xx + short_egde]
        # resize to 64, 64
        resized_img = transform.resize(crop_img, (size, size))
-       resized_img *= 255
-       return resized_img.astype("uint8")
+       resized_img *= 255.
+       return resized_img.astype("float32")
 
     def has_more_training_data(self, index = None):
         if not index:
@@ -115,7 +115,7 @@ class MRIDataIterator(object):
             for path in sax_set:
                 f = dicom.read_file(path)
                 img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
-                bindex = np.clip(np.digitize(f.SliceLocation, self.histogram_bins, right=True),0,len(self.histogram_bins)-2)
+                bindex = np.clip(np.digitize([f.SliceLocation], self.histogram_bins, right=True)[0],0.,len(self.histogram_bins)-2)
                 data_array[i][bindex][:][:] = np.array(img, dtype=np.float32)
                 i += 1
 
@@ -146,7 +146,7 @@ class MRIDataIterator(object):
             data = []
             for path in sax_set:
                 f = dicom.read_file(path)
-                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64)
+                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64.)
                 data.append(img)
             data = np.array(data, dtype=np.float32)
             # data = data.reshape(data.size)

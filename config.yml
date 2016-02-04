@@ -1,0 +1,4 @@
+dataset_paths:
+    train_data: /home/ph/datasets/left_ventricle_volume/train/ 
+    train_labels: /home/ph/datasets/left_ventricle_volume/train.csv
+    validation_data: /home/ph/datasets/left_ventricle_volume/validation/
