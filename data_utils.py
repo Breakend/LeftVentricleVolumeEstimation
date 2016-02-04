@@ -65,10 +65,14 @@ class MRIDataIterator(object):
            labelmap[int(arr[0])] = [np.float32(x) for x in arr[1:]]
        return labelmap
 
-    def preproc(self, img, size):
+    def preproc(self, img, size, pixel_spacing):
        """crop center and resize"""
+        #    TODO: this is stupid, you could crop out the heart
+        # But should test this
        if img.shape[0] < img.shape[1]:
            img = img.T
+       # Standardize based on pixel spacing
+       img = transform.resize(img, (int(img.shape[0]*(1.0/np.float32(pixel_spacing[0]))), int(img.shape[1]*(1.0/np.float32(pixel_spacing[1])))))
        # we crop image from center
        short_egde = min(img.shape[:2])
        yy = int((img.shape[0] - short_egde) / 2)
@@ -110,7 +114,7 @@ class MRIDataIterator(object):
             i = 0
             for path in sax_set:
                 f = dicom.read_file(path)
-                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64)
+                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
                 bindex = np.clip(np.digitize(f.SliceLocation, self.histogram_bins, right=True),0,len(self.histogram_bins)-2)
                 data_array[i][bindex][:][:] = np.array(img, dtype=np.float32)
                 i += 1

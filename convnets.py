@@ -22,6 +22,7 @@ import time
 import numpy as np
 import theano
 import theano.tensor as T
+import pandas as pd
 
 import lasagne
 from data_utils import MRIDataIterator
@@ -44,21 +45,37 @@ def build_cnn(input_var=None, numer_of_buckets=10):
     # Convolutional layer with 32 kernels of size 5x5. Strided and padded
     # convolutions are supported as well; see the docstring.
     network = lasagne.layers.Conv2DLayer(
-            network, num_filters=32, filter_size=(5, 5),
+            network, num_filters=64, filter_size=(3, 3),
             nonlinearity=lasagne.nonlinearities.rectify,
             W=lasagne.init.GlorotUniform())
-    # Expert note: Lasagne provides alternative convolutional layers that
-    # override Theano's choice of which implementation to use; for details
-    # please see http://lasagne.readthedocs.org/en/latest/user/tutorial.html.
 
-    # Max-pooling layer of factor 2 in both dimensions:
+    network = lasagne.layers.Conv2DLayer(
+            network, num_filters=64, filter_size=(3, 3),
+            nonlinearity=lasagne.nonlinearities.rectify,
+            W=lasagne.init.GlorotUniform())
+
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
+    network = lasagne.layers.DropoutLayer(network, p=.25)
 
     # Another convolution with 32 5x5 kernels, and another 2x2 pooling:
     network = lasagne.layers.Conv2DLayer(
-            network, num_filters=32, filter_size=(5, 5),
+            network, num_filters=96, filter_size=(3, 3),
+            nonlinearity=lasagne.nonlinearities.rectify)
+    network = lasagne.layers.Conv2DLayer(
+            network, num_filters=96, filter_size=(3, 3),
             nonlinearity=lasagne.nonlinearities.rectify)
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
+    network = lasagne.layers.DropoutLayer(network, p=.25)
+
+    # Another convolution with 32 5x5 kernels, and another 2x2 pooling:
+    network = lasagne.layers.Conv2DLayer(
+            network, num_filters=128, filter_size=(2, 2),
+            nonlinearity=lasagne.nonlinearities.rectify)
+    network = lasagne.layers.Conv2DLayer(
+            network, num_filters=128, filter_size=(2, 2),
+            nonlinearity=lasagne.nonlinearities.rectify)
+    network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
+    network = lasagne.layers.DropoutLayer(network, p=.25)
 
     network = lasagne.layers.FlattenLayer(network, 2)
     #should now be (30 x (64*64*10))
@@ -98,19 +115,10 @@ def build_cnn(input_var=None, numer_of_buckets=10):
     return network
 
 
-# ############################## Main program ################################
-# Everything else will be handled in our main program now. We could pull out
-# more functions to better separate the code, but it wouldn't make it any
-# easier to read.
-
-def main(num_epochs=1):
-    # Load the dataset
-    print("Creating data iterator...")
-    mriIter = MRIDataIterator("/Users/Breakend/Documents/datasets/sciencebowl2015/train", "/Users/Breakend/Documents/datasets/sciencebowl2015/train.csv")
-
+def compose_functions(scope="default"):
     # Prepare Theano variables for inputs and targets
-    input_var = T.tensor4('inputs')
-    target_var = T.ivector('targets')
+    input_var = T.tensor4(scope + 'inputs')
+    target_var = T.ivector(scope + 'targets')
 
     network = build_cnn(input_var)
 
@@ -139,22 +147,45 @@ def main(num_epochs=1):
                                                             target_var)
     test_loss = test_loss.mean()
     # As a bonus, also create an expression for the classification accuracy:
-    test_acc = T.mean(T.eq(T.argmax(test_prediction, axis=1), target_var),
-                      dtype=theano.config.floatX)
+    # test_acc = T.mean(T.eq(T.argmax(test_prediction, axis=1), target_var),
+                    #   dtype=theano.config.floatX)
+    # print(len(test_prediction))
+    # print(test_prediction.shape)
+    # v = np.array(range(test_prediction.shape[0]))
+    # h = (v >= V_m) * -1.
+    # sq_dists = (test_prediction - h)**2
+    # test_acc = T.sqr(T.sum(p, h))
 
     # Compile a function performing a training step on a mini-batch (by giving
     # the updates dictionary) and returning the corresponding training loss:
     train_fn = theano.function([input_var, target_var], loss, updates=updates, allow_input_downcast=True)
 
     # Compile a second function computing the validation loss and accuracy:
-    val_fn = theano.function([input_var, target_var], [test_loss, test_acc])
+    val_fn = theano.function([input_var, target_var], [test_loss, test_prediction], allow_input_downcast=True)
+    return network, train_fn, val_fn
+
+
+
+# ############################## Main program ################################
+# Everything else will be handled in our main program now. We could pull out
+# more functions to better separate the code, but it wouldn't make it any
+# easier to read.
+
+def main(num_epochs=1):
+    # Load the dataset
+    print("Creating data iterator...")
+    mriIter = MRIDataIterator("/Users/Breakend/Documents/datasets/sciencebowl2015/train", "/Users/Breakend/Documents/datasets/sciencebowl2015/train.csv")
+
+    network, train_fn, val_fn = compose_functions("systole") #systole
+    network_dia, train_fn_dia, val_fn_dia = compose_functions("diastole")
 
     # Finally, launch the training loop.
     print("Starting training...")
     # We iterate over epochs:
     for epoch in range(num_epochs):
         # In each epoch, we do a full pass over the training data:
-        train_err = 0
+        train_err_sys = 0
+        train_err_dia = 0
         train_batches = 0
         training_index = 1
         validation_index = mriIter.last_training_index + 1
@@ -171,14 +202,17 @@ def main(num_epochs=1):
                 continue
             # systole, diastole = targets
             # import pdb;pdb.set_trace()
-            print("Inputs shape: {}".format(inputs.shape))
-            train_err += train_fn(inputs, systole)
+            # print("Inputs shape: {}".format(inputs.shape))
+            train_err_sys += train_fn(inputs, systole)
+            train_err_dia += train_fn_dia(inputs, diastole)
             train_batches += 1
             training_index += 1
 
         # And a full pass over the validation data:
-        val_err = 0
-        val_acc = 0
+        val_err_sys = 0
+        val_acc_sys = 0
+        val_err_dia = 0
+        val_acc_dia = 0
         val_batches = 0
         while mriIter.has_more_validation_data(validation_index):
             gc.collect()
@@ -189,37 +223,36 @@ def main(num_epochs=1):
                 print("Skipping because failed to retrieve data")
                 continue
             # systole, diastole = targets
-            err, acc = val_fn(inputs, systole)
-            val_err += err
-            val_acc += acc
+            err, prediction = val_fn(inputs, systole)
+            # import pdb;pdb.set_trace()
+            v = np.array(range(prediction.shape[1]))
+            heavy = (v >= systole[0])
+            sq_dists = (prediction[0] - heavy)**2
+            # print(prediction.shape)
+            val_err_sys += err
+            val_acc_sys += sum(sq_dists)
+
+            err, prediction = val_fn_dia(inputs, systole)
+            v = np.array(range(prediction.shape[1]))
+            heavy = (v >= systole[0])
+            sq_dists = (prediction[0] - heavy)**2
+            val_err_dia += err
+            val_acc_dia += sum(sq_dists)
             val_batches += 1
             validation_index += 1
 
         # Then we print the results for this epoch:
         print("Epoch {} of {} took {:.3f}s".format(
             epoch + 1, num_epochs, time.time() - start_time))
-        print("  training loss:\t\t{:.6f}".format(train_err / train_batches))
-        print("  validation loss:\t\t{:.6f}".format(val_err / val_batches))
-        print("  validation accuracy:\t\t{:.2f} %".format(
-            val_acc / val_batches * 100))
+        # print("  training loss:\t\t{:.6f}".format(train_err / train_batches))
+        # print("  validation loss:\t\t{:.6f}".format(val_err / val_batches))
+        print("CRPS:\t\t{:.2f} %".format(
+            (val_acc_sys + val_acc_dia) / (val_batches * 600.) * .5))
 
-    # After training, we compute and print the test error:
-    # test_err = 0
-    # test_acc = 0
-    # test_batches = 0
-    # for batch in iterate_minibatches(X_test, y_test, 500, shuffle=False):
-    #     inputs, targets = batch
-    #     err, acc = val_fn(inputs, targets)
-    #     test_err += err
-    #     test_acc += acc
-    #     test_batches += 1
-    # print("Final results:")
-    # print("  test loss:\t\t\t{:.6f}".format(test_err / test_batches))
-    # print("  test accuracy:\t\t{:.2f} %".format(
-    #     test_acc / test_batches * 100))
 
     # Optionally, you could now dump the network weights to a file like this:
-    # np.savez('model.npz', *lasagne.layers.get_all_param_values(network))
+    np.savez('model-sys.npz', *lasagne.layers.get_all_param_values(network))
+    np.savez('model-dia.npz', *lasagne.layers.get_all_param_values(network_dia))
     #
     # And load them again later on like this:
     # with np.load('model.npz') as f:
