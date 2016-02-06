@@ -91,6 +91,45 @@ class MRIDataIterator(object):
     def has_more_validation_data(self, index):
         return index <= self.PATIENT_RANGE_INCLUSIVE[1]
 
+    def get_median_bucket_data(self, index=None):
+        """ Returns a batch in format (30, num_bins-1, 64, 64) which
+            puts slices together, padding empty bucket layers with 0s"""
+
+        # TODO: should incorporate slice thickness data in case a slice overlaps
+        # several buckets?
+        if not self.labels or not self.frames:
+            raise ValueError("Frames or labels not set")
+        if not index:
+            index = self.current_iter_position
+            self.current_iter_position += 1
+
+        if self.PATIENT_RANGE_INCLUSIVE[0] > index > self.PATIENT_RANGE_INCLUSIVE[1]:
+            raise ValueError("Index out of bounds for data.")
+
+        #TODO: fix this
+        patient_frames = self.frames[index]
+        data_array = np.zeros((30, len(self.histogram_bins)-1, 64, 64))
+        slices_locations_to_names = {}
+        i = 0
+        for sax_set in patient_frames:
+            slices_locations_to_names[int(dicom.read_file(sax_set[0]).SliceLocation)] = i
+            i += 1
+        median_array = slices_locations_to_names.keys()
+        median_array.sort()
+        median_index = median_array[len(slices_locations_to_names.keys())/2]
+        sax_set = patient_frames[median_index]
+        for path in sax_set:
+            f = dicom.read_file(path)
+            img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
+            bindex = np.clip(np.digitize([f.SliceLocation], self.histogram_bins, right=True)[0],0.,len(self.histogram_bins)-2)
+            data_array[i][0][:][:] = np.array(img, dtype=np.float32)
+
+        # data, systolic, diastolic
+        # print("Systolic: {}".format()
+        # print(np.array(np.float32(self.labels[index][0])))
+        return data_array, np.array([np.float32(self.labels[index][0])]), np.array([np.float32(self.labels[index][1])]) #one_hot(600, self.labels[index][0]), one_hot(600, self.labels[index][0])#[ np.full(len(patient_frames), np.float32(x), dtype=np.float32) for x in self.labels[index]]
+
+
     def retrieve_data_batch_by_layer_buckets(self, index=None):
         """ Returns a batch in format (30, num_bins-1, 64, 64) which
             puts slices together, padding empty bucket layers with 0s"""

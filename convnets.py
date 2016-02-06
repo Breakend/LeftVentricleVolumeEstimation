@@ -26,7 +26,7 @@ def build_cnn(input_var=None, numer_of_buckets=10):
     # Input layer, as usual:
     # (number of frames in cardiac cycle x number_of_buckets x image_width x image_height)
     # (30 x 10 x 64 x 64)
-    network = lasagne.layers.InputLayer(shape=(30, numer_of_buckets, 64, 64),
+    network = lasagne.layers.InputLayer(shape=(30, 1, 64, 64),
                                         input_var=input_var)
     # This time we do not apply input dropout, as it tends to work less well
     # for convolutional layers.
@@ -166,7 +166,7 @@ def main(num_epochs=1):
     with open("config.yml", 'r') as ymlfile:
         cfg = yaml.load(ymlfile)
     train_dir = cfg['dataset_paths']['train_data']
-    train_labels = cfg['dataset_paths']['train_labels'] 
+    train_labels = cfg['dataset_paths']['train_labels']
 
     mriIter = MRIDataIterator(train_dir, train_labels)
 
@@ -190,7 +190,7 @@ def main(num_epochs=1):
             gc.collect()
             print("Training index %s" % training_index)
             try:
-                inputs, systole, diastole = mriIter.retrieve_data_batch_by_layer_buckets(training_index)
+                inputs, systole, diastole = mriIter.get_median_bucket_data(training_index)
             except Exception:
                 print("Skipping because failed to retrieve data")
                 print(traceback.format_exc())
@@ -214,7 +214,7 @@ def main(num_epochs=1):
             gc.collect()
             print("Validation index %s" % validation_index)
             try:
-                inputs, systole, diastole = mriIter.retrieve_data_batch_by_layer_buckets(validation_index)
+                inputs, systole, diastole = mriIter.get_median_bucket_data(validation_index)
             except Exception:
                 print("Skipping because failed to retrieve data")
                 print(traceback.format_exc())
