@@ -38,62 +38,50 @@ def build_cnn(input_var=None, numer_of_buckets=10):
             nonlinearity=lasagne.nonlinearities.rectify,
             W=lasagne.init.GlorotUniform())
 
-    network = lasagne.layers.Conv2DLayer(
-            network, num_filters=64, filter_size=(3, 3),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.GlorotUniform())
-
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
-    network = lasagne.layers.DropoutLayer(network, p=.25)
+    #network = lasagne.layers.DropoutLayer(network, p=.25)
 
     # Another convolution with 32 5x5 kernels, and another 2x2 pooling:
     network = lasagne.layers.Conv2DLayer(
             network, num_filters=96, filter_size=(3, 3),
             nonlinearity=lasagne.nonlinearities.rectify)
-    network = lasagne.layers.Conv2DLayer(
-            network, num_filters=96, filter_size=(3, 3),
-            nonlinearity=lasagne.nonlinearities.rectify)
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
-    network = lasagne.layers.DropoutLayer(network, p=.25)
+    #network = lasagne.layers.DropoutLayer(network, p=.25)
 
     # Another convolution with 32 5x5 kernels, and another 2x2 pooling:
     network = lasagne.layers.Conv2DLayer(
             network, num_filters=128, filter_size=(2, 2),
             nonlinearity=lasagne.nonlinearities.rectify)
-    network = lasagne.layers.Conv2DLayer(
-            network, num_filters=128, filter_size=(2, 2),
-            nonlinearity=lasagne.nonlinearities.rectify)
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
-    network = lasagne.layers.DropoutLayer(network, p=.25)
-
+    #network = lasagne.layers.DropoutLayer(network, p=.25)
     network = lasagne.layers.FlattenLayer(network, 2)
-    #should now be (30 x (64*64*10))
 
+    #should now be (30 x (64*64*10))
+   
     print("After flatter, dims: {}".format(network.output_shape))
 
     # need to get it to (1 x 30 x (64*64*10))
     network = lasagne.layers.ReshapeLayer(network, (-1, [0], [1]))
 
-    print("After reshape, dims: {}".format(network.output_shape))
+    #print("After reshape, dims: {}".format(network.output_shape))
 
     network = lasagne.layers.LSTMLayer(
-        network, 512, grad_clipping=100,
+        network, 712, grad_clipping=100,
         nonlinearity=lasagne.nonlinearities.tanh)
 
-    print("After lstm, dims: {}".format(network.output_shape))
+    #print("After lstm, dims: {}".format(network.output_shape))
 
     # The l_forward layer creates an output of dimension (batch_size, SEQ_LENGTH, N_HIDDEN)
     # Since we are only interested in the final prediction, we isolate that quantity and feed it to the next layer.
     # The output of the sliced layer will then be of size (batch_size, N_HIDDEN)
-    network = lasagne.layers.SliceLayer(network, -1, 1)
-
-    print("After slice, dims: {}".format(network.output_shape))
+    #network = lasagne.layers.SliceLayer(network, -1, 1)
+    # print("After slice, dims: {}".format(network.output_shape))
 
     # A fully-connected layer of 1024 units with 50% dropout on its inputs:
     network = lasagne.layers.DenseLayer(
             lasagne.layers.dropout(network, p=.5),
-            num_units=1024,
-            nonlinearity=lasagne.nonlinearities.rectify)
+            num_units=712,
+            nonlinearity=lasagne.nonlinearities.tanh)
 
     # And, finally, the 600-unit output layer with 50% dropout on its inputs:
     network = lasagne.layers.DenseLayer(
@@ -108,13 +96,14 @@ def compose_functions(scope="default"):
     # Prepare Theano variables for inputs and targets
     input_var = T.tensor4(scope + 'inputs')
     target_var = T.ivector(scope + 'targets')
-
+    #x_printed = theano.printing.Print('this is a very important value')(target_var)
     network = build_cnn(input_var)
 
     # Create a loss expression for training, i.e., a scalar objective we want
     # to minimize (for our multi-class problem, it is the cross-entropy loss):
     prediction = lasagne.layers.get_output(network)
-    loss = theano.tensor.nnet.categorical_crossentropy(prediction, target_var).mean()
+    #prediction_printed = theano.printing.Print('this is a very important prediction')(prediction)
+    loss = lasagne.objectives.categorical_crossentropy(prediction, target_var).mean()
     # loss = loss.mean()
     # We could add some weight decay as well here, see lasagne.regularization.
 
@@ -147,10 +136,10 @@ def compose_functions(scope="default"):
 
     # Compile a function performing a training step on a mini-batch (by giving
     # the updates dictionary) and returning the corresponding training loss:
-    train_fn = theano.function([input_var, target_var], loss, updates=updates, allow_input_downcast=True)
+    train_fn = theano.function([input_var, target_var], loss, updates=updates) 
 
     # Compile a second function computing the validation loss and accuracy:
-    val_fn = theano.function([input_var, target_var], [test_loss, test_prediction], allow_input_downcast=True)
+    val_fn = theano.function([input_var, target_var], [test_loss, test_prediction])
     return network, train_fn, val_fn
 
 
@@ -160,20 +149,30 @@ def compose_functions(scope="default"):
 # more functions to better separate the code, but it wouldn't make it any
 # easier to read.
 
-def main(num_epochs=1):
+def main(num_epochs=10):
     # Load the dataset
     print("Creating data iterator...")
     with open("config.yml", 'r') as ymlfile:
         cfg = yaml.load(ymlfile)
     train_dir = cfg['dataset_paths']['train_data']
     train_labels = cfg['dataset_paths']['train_labels']
+    batch_size = 1 
 
     mriIter = MRIDataIterator(train_dir, train_labels)
 
     network, train_fn, val_fn = compose_functions("systole") #systole
     network_dia, train_fn_dia, val_fn_dia = compose_functions("diastole")
 
-    import pdb;pdb.set_trace()
+    if os.path.exists('model-sys.npz'):
+	with np.load('model-sys.npz') as f:
+            param_values = [f['arr_%d' % i] for i in range(len(f.files))]
+	    lasagne.layers.set_all_param_values(network, param_values)
+
+    if os.path.exists('model-dia.npz'):
+	with np.load('model-dia.npz') as f:
+            param_values = [f['arr_%d' % i] for i in range(len(f.files))]
+	    lasagne.layers.set_all_param_values(network_dia, param_values)
+
     # Finally, launch the training loop.
     print("Starting training...")
     # We iterate over epochs:
@@ -182,15 +181,15 @@ def main(num_epochs=1):
         train_err_sys = 0
         train_err_dia = 0
         train_batches = 0
-        training_index = 395#1
-        validation_index = 500#mriIter.last_training_index + 1
+        training_index = 1
+        validation_index = mriIter.last_training_index + 1
 
         start_time = time.time()
-        while mriIter.has_more_training_data(training_index):
+        while mriIter.has_more_training_data(training_index + batch_size):
             gc.collect()
             print("Training index %s" % training_index)
             try:
-                inputs, systole, diastole = mriIter.get_median_bucket_data(training_index)
+                inputs, systole, diastole = mriIter.get_median_bucket_data(training_index, training_index + batch_size)
             except Exception:
                 print("Skipping because failed to retrieve data")
                 print(traceback.format_exc())
@@ -202,7 +201,7 @@ def main(num_epochs=1):
             train_err_sys += train_fn(inputs, systole)
             train_err_dia += train_fn_dia(inputs, diastole)
             train_batches += 1
-            training_index += 1
+            training_index += batch_size
 
         # And a full pass over the validation data:
         val_err_sys = 0
@@ -214,7 +213,7 @@ def main(num_epochs=1):
             gc.collect()
             print("Validation index %s" % validation_index)
             try:
-                inputs, systole, diastole = mriIter.get_median_bucket_data(validation_index)
+                inputs, systole, diastole = mriIter.get_median_bucket_data(validation_index, validation_index + 1)
             except Exception:
                 print("Skipping because failed to retrieve data")
                 print(traceback.format_exc())
@@ -222,19 +221,20 @@ def main(num_epochs=1):
                 continue
             # systole, diastole = targets
             err, prediction = val_fn(inputs, systole)
+            prob_dist = np.cumsum(prediction[0])
             # import pdb;pdb.set_trace()
             v = np.array(range(prediction.shape[1]))
             heavy = (v >= systole[0])
-            sq_dists = (prediction[0] - heavy)**2
+            sq_dists = (prob_dist - heavy)**2
             # print(prediction.shape)
             val_err_sys += err
             val_acc_sys += (sum(sq_dists) / 600.)
 
             err, prediction = val_fn_dia(inputs, systole)
-            print(prediction)
+            prob_dist = np.cumsum(prediction[0])
             v = np.array(range(prediction.shape[1]))
-            heavy = (v >= systole[0])
-            sq_dists = (prediction[0] - heavy)**2
+            heavy = (v >= diastole[0])
+            sq_dists = (prob_dist - heavy)**2
             val_err_dia += err
             val_acc_dia += (sum(sq_dists) / 600.)
             val_batches += 1
