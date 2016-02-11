@@ -26,7 +26,7 @@ class MRIDataIterator(object):
         if label_path:
             self.labels = self.get_label_map(label_path)
         self.current_iter_position = 0
-        self.PATIENT_RANGE_INCLUSIVE = (1,500)
+        self.PATIENT_RANGE_INCLUSIVE = (1, len(self.frames))
         self.last_training_index = int(percent_validation * self.PATIENT_RANGE_INCLUSIVE[1])
         self.histogram_bins = self.get_histogram_bins()
         self.memoized_data = {}
@@ -40,22 +40,28 @@ class MRIDataIterator(object):
         return bins
 
     def get_frames(self, root_path):
-       """Get path to all the frame in view SAX and contain complete frames"""
-       ret = {}
-       for root, _, files in os.walk(root_path):
-           if len(files) == 0 or not files[0].endswith(".dcm") or root.find("sax") == -1:
+        """Get path to all the frame in view SAX and contain complete frames"""
+        ret = {}
+        for root, _, files in os.walk(root_path):
+            if len(files) == 0 or not files[0].endswith(".dcm") or root.find("sax") == -1:
                continue
-           prefix = files[0].rsplit('-', 1)[0]
-           data_index = int(root.rsplit('/', 3)[1])
-           fileset = set(files)
-           expected = ["%s-%04d.dcm" % (prefix, i + 1) for i in range(30)]
-           if all(x in fileset for x in expected):
-               if data_index in ret:
+            prefix = files[0].rsplit('-', 1)[0]
+            data_index = int(root.rsplit('/', 3)[1])
+            fileset = set(files)
+            expected = ["%s-%04d.dcm" % (prefix, i + 1) for i in range(30)]
+            if all(x in fileset for x in expected):
+                if data_index in ret:
                    ret[data_index].append([root + "/" + x for x in expected])
-               else:
+                else:
                    ret[data_index] = [[root + "/" + x for x in expected]]
-
-       return ret
+            else:
+                backup_expected = ["%s-%04d-0002.dcm" % (files[0].rsplit('-', 2)[0], i + 1) for i in range(30)]
+                if all(x in fileset for x in backup_expected):
+                    if data_index in ret:
+                       ret[data_index].append([root + "/" + x for x in backup_expected])
+                    else:
+                       ret[data_index] = [[root + "/" + x for x in backup_expected]]
+        return ret
 
     def get_label_map(self, fname):
        labelmap = {}
@@ -89,50 +95,54 @@ class MRIDataIterator(object):
             index = self.current_iter_position
         return index <= self.last_training_index
 
+    def has_more_data(self, index):
+        return index in self.frames
+
     def has_more_validation_data(self, index):
         return index <= self.PATIENT_RANGE_INCLUSIVE[1]
 
-    def get_median_bucket_data(self, start_index=None, end_index=None):
+    def get_median_bucket_data(self, start_index=None, end_index=None, return_labels=True):
         """ Returns a batch in format (30, num_bins-1, 64, 64) which
             puts slices together, padding empty bucket layers with 0s"""
 
         # TODO: should incorporate slice thickness data in case a slice overlaps
         # several buckets?
-        if not self.labels or not self.frames:
-            raise ValueError("Frames or labels not set")
+        if not self.frames:
+            raise ValueError("Frames not set")
 
         if self.PATIENT_RANGE_INCLUSIVE[0] > end_index > self.PATIENT_RANGE_INCLUSIVE[1]:
             raise ValueError("Index out of bounds for data.")
 
         #TODO: fix this
-        index = start_index 
+        index = start_index
         z = 0
-
-	data_array = np.zeros((30, end_index-start_index, 64, 64), dtype=np.float32)
+        data_array = np.zeros((30, end_index-start_index, 64, 64), dtype=np.float32)
         while index < end_index:
-                if index in self.memoized_data:
-                    return self.memoized_data[index]
-		patient_frames = self.frames[index]
-		slices_locations_to_names = {}
-		i = 0
-		for sax_set in patient_frames:
-		    slices_locations_to_names[int(dicom.read_file(sax_set[0]).SliceLocation)] = i
-		    i += 1
-		median_array = slices_locations_to_names.keys()
-		median_array.sort()
-		median_index = slices_locations_to_names[median_array[len(slices_locations_to_names.keys())/2]]
-		sax_set = patient_frames[median_index]
-		i = 0
-		for path in sax_set:
-		    f = dicom.read_file(path)
-		    img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
-		    data_array[i][0][:][:] = np.array(img, dtype=np.float32)
-		    i += 1 
+            if index in self.memoized_data:
+                return self.memoized_data[index]
+            patient_frames = self.frames[index]
+            slices_locations_to_names = {}
+            i = 0
+            for sax_set in patient_frames:
+                slices_locations_to_names[int(dicom.read_file(sax_set[0]).SliceLocation)] = i
+                i += 1
+            median_array = slices_locations_to_names.keys()
+            median_array.sort()
+            median_index = slices_locations_to_names[median_array[len(slices_locations_to_names.keys())/2]]
+            sax_set = patient_frames[median_index]
+            i = 0
+            for path in sax_set:
+                f = dicom.read_file(path)
+                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
+                data_array[i][0][:][:] = np.array(img, dtype=np.float32)
+                i += 1
                 z += 1
                 index += 1
 
-
-        ret_val = (data_array, np.array([np.int32(self.labels[index][0])]*(end_index-start_index), dtype=np.int32), np.array([np.int32(self.labels[index][1])]*(end_index -start_index), dtype=np.int32))
+        if return_labels:
+            ret_val = (data_array, np.array([np.int32(self.labels[index][0])]*(end_index-start_index), dtype=np.int32), np.array([np.int32(self.labels[index][1])]*(end_index -start_index), dtype=np.int32))
+        else:
+            ret_val = data_array
 
         self.memoized_data[index] = ret_val
         return ret_val
