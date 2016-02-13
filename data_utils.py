@@ -20,7 +20,7 @@ def rotation_augmentation(X, angle_range):
     X_rot = np.copy(X)
     angle = np.random.randint(-angle_range, angle_range)
     for j in range(X.shape[0]):
-	X_rot[j, 0] = ndimage.rotate(X[j, 0], angle, reshape=False, order=1)
+        X_rot[j, 0] = ndimage.rotate(X[j, 0], angle, reshape=False, order=1)
     return X_rot
 
 def shift_augmentation(X, h_range, w_range):
@@ -122,7 +122,7 @@ class MRIDataIterator(object):
     def has_more_validation_data(self, index):
         return index <= self.PATIENT_RANGE_INCLUSIVE[1]
 
-    def get_median_bucket_data(self, start_index=None, end_index=None, return_labels=True):
+    def get_median_bucket_data(self, start_index, bucket_size, return_labels=True):
         """ Returns a batch in format (30, num_bins-1, 64, 64) which
             puts slices together, padding empty bucket layers with 0s"""
 
@@ -131,52 +131,63 @@ class MRIDataIterator(object):
         if not self.frames:
             raise ValueError("Frames not set")
 
-        if self.PATIENT_RANGE_INCLUSIVE[0] > end_index > self.PATIENT_RANGE_INCLUSIVE[1]:
+        if self.PATIENT_RANGE_INCLUSIVE[0] > start_index + bucket_size > self.PATIENT_RANGE_INCLUSIVE[1]:
             raise ValueError("Index out of bounds for data.")
 
         index = start_index
-        data_array = np.zeros((30, end_index-start_index, 64, 64), dtype=np.float32)
+        if index in self.memoized_data:
+            return self.memoized_data[start_index]
 
-	if index in self.memoized_data:
-            return self.memoized_data[index]
+        data_array = np.zeros((30*bucket_size, 1, 64, 64), dtype=np.float32)
+        systolics = []
+        diastolics = []
 
-	patient_frames = self.frames[index]
-	slices_locations_to_names = {}
-	i = 0
-	for sax_set in patient_frames:
-	    slices_locations_to_names[int(dicom.read_file(sax_set[0]).SliceLocation)] = i
-	    i += 1
-	median_array = slices_locations_to_names.keys()
-	median_array.sort()
-	median_index = slices_locations_to_names[median_array[len(slices_locations_to_names.keys())/2]]
-	sax_set = patient_frames[median_index]
-	i = 0
-	for path in sax_set:
-	    f = dicom.read_file(path)
-	    img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
-	    data_array[i][0][:][:] = np.array(img, dtype=np.float32)
-	    i += 1
+        while index < start_index + bucket_size:
+
+            patient_frames = self.frames[index]
+            slices_locations_to_names = {}
+            i = 0
+            for sax_set in patient_frames:
+                slices_locations_to_names[int(dicom.read_file(sax_set[0]).SliceLocation)] = i
+                i += 1
+            median_array = slices_locations_to_names.keys()
+            median_array.sort()
+            median_index = slices_locations_to_names[median_array[len(slices_locations_to_names.keys())/2]]
+            sax_set = patient_frames[median_index]
+            i = 0
+            for path in sax_set:
+                f = dicom.read_file(path)
+                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
+                data_array[z*30 + i][0][:][:] = np.array(img, dtype=np.float32)
+                i += 1
+            systolics.append(np.int32(self.labels[index][0]))
+            diastolics.append(np.int32(self.labels[index][1]))
+            index += 1
 
         if return_labels:
-            ret_val = (data_array, np.array([np.int32(self.labels[index][0])]*(end_index-start_index), dtype=np.int32), np.array([np.int32(self.labels[index][1])]*(end_index -start_index), dtype=np.int32))
+            ret_val = (data_array, np.array(systolics, dtype=np.int32), np.array(diastolics, dtype=np.int32))
         else:
             ret_val = data_array
 
-        self.memoized_data[index] = ret_val
-        return ret_val
+        self.memoized_data[start_index] = ret_val
+        return ret_vals
 
-    def get_augmented_data(self, index):
-        orig_data_index = (index % (len(self.frames)*self.percent_validation - 1) + 1)
+    def get_augmented_data(self, start_index):
+        orig_data_index = (start_index % (len(self.frames)*self.percent_validation - 1) + 1)
         if not self.frames:
             raise ValueError("Frames not set")
         if orig_data_index not in self.memoized_data:
             raise ValueError("Must memoize non-augmented frames first")
-        if index in self.memoized_augmented:
-            return self.memoized_augmented[index]
-        reg_data = self.memoized_data[orig_data_index]
+        if start_index in self.memoized_augmented:
+            return self.memoized_augmented[start_index]
+
+        reg_data = self.memoized_data[start_index]
         augmented_data = rotation_augmentation(reg_data[0], 15)
         augmented_data = shift_augmentation(augmented_data, 0.1, 0.1)
-        return (augmented_data, reg_data[1], reg_data[2])
+
+        ret_val = (augmented_data, reg_data[1], reg_data[2])
+        self.memoized_augmented[start_index] = ret_val
+        return ret_vals
 
     def retrieve_data_batch_by_layer_buckets(self, index=None):
         """ Returns a batch in format (30, num_bins-1, 64, 64) which

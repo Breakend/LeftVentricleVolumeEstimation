@@ -16,7 +16,7 @@ import theano.tensor as T
 import lasagne
 from data_utils import MRIDataIterator
 
-def build_cnn(input_var=None, numer_of_buckets=10):
+def build_cnn(input_var=None, batch_size=10):
     """number_of_buckets:   Is the number of histogram buckets we have created.
                             We treat these like layers for the convolution,
                             filling in the missing layers with 0s. We also throw
@@ -26,7 +26,7 @@ def build_cnn(input_var=None, numer_of_buckets=10):
     # Input layer, as usual:
     # (number of frames in cardiac cycle x number_of_buckets x image_width x image_height)
     # (30 x 10 x 64 x 64)
-    network = lasagne.layers.InputLayer(shape=(30, 1, 64, 64),
+    network = lasagne.layers.InputLayer(shape=(30*batch_size, 1, 64, 64),
                                         input_var=input_var)
     # This time we do not apply input dropout, as it tends to work less well
     # for convolutional layers.
@@ -62,11 +62,13 @@ def build_cnn(input_var=None, numer_of_buckets=10):
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
     network = lasagne.layers.DropoutLayer(network, p=.25)
     network = lasagne.layers.FlattenLayer(network, 2)
-   
+
     print("After flatter, dims: {}".format(network.output_shape))
 
     # need to get it to (1 x 30 x (64*64*10))
-    network = lasagne.layers.ReshapeLayer(network, (-1, [0], [1]))
+    # With batching need to somehow reshape from (30*batch_size, 1, 64, 64) to
+    # (batch_size, 30, 1024)
+    network = lasagne.layers.ReshapeLayer(network, (batch_size, 30, [1]))
 
     #print("After reshape, dims: {}".format(network.output_shape))
 
@@ -141,7 +143,7 @@ def compose_functions(scope="default"):
 
     # Compile a function performing a training step on a mini-batch (by giving
     # the updates dictionary) and returning the corresponding training loss:
-    train_fn = theano.function([input_var, target_var], loss, updates=updates) 
+    train_fn = theano.function([input_var, target_var], loss, updates=updates)
 
     # Compile a second function computing the validation loss and accuracy:
     val_fn = theano.function([input_var, target_var], [test_loss, test_prediction])
@@ -161,7 +163,7 @@ def main(num_epochs=50):
         cfg = yaml.load(ymlfile)
     train_dir = cfg['dataset_paths']['train_data']
     train_labels = cfg['dataset_paths']['train_labels']
-    batch_size = 1 
+    batch_size = 1
 
     mriIter = MRIDataIterator(train_dir, train_labels)
 
@@ -169,14 +171,13 @@ def main(num_epochs=50):
     network_dia, train_fn_dia, val_fn_dia = compose_functions("diastole")
 
     if os.path.exists('model-sys.npz'):
-	with np.load('model-sys.npz') as f:
+        with np.load('model-sys.npz') as f:
             param_values = [f['arr_%d' % i] for i in range(len(f.files))]
-	    lasagne.layers.set_all_param_values(network, param_values)
-
+            lasagne.layers.set_all_param_values(network, param_values)
     if os.path.exists('model-dia.npz'):
-	with np.load('model-dia.npz') as f:
+        with np.load('model-dia.npz') as f:
             param_values = [f['arr_%d' % i] for i in range(len(f.files))]
-	    lasagne.layers.set_all_param_values(network_dia, param_values)
+            lasagne.layers.set_all_param_values(network_dia, param_values)
 
     # Finally, launch the training loop.
     print("Starting training...")
@@ -207,7 +208,7 @@ def main(num_epochs=50):
             train_err_dia += train_fn_dia(inputs, diastole)
             train_batches += 1
             training_index += batch_size
-        
+
         augmented_training_index = training_index
         while (augmented_training_index < 1000):
             gc.collect()
@@ -267,6 +268,8 @@ def main(num_epochs=50):
         # print("  validation loss:\t\t{:.6f}".format(val_err / val_batches))
         print("Validation Sum Sqrts Systolic: {}".format(val_acc_sys))
         print("Validation Sum Sqrts Diastolic: {}".format(val_acc_dia))
+        print("Train Err Systole: {}".format(train_err_sys))
+        print("Train Err Diastole: {}".format(train_err_dia))
         print("CRPS:\t\t{:.2f} %".format(
             (val_acc_sys + val_acc_dia) / (val_batches) * .5))
 

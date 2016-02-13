@@ -1,5 +1,6 @@
 dataset_paths:
     train_data: /home/ph/datasets/left_ventricle_volume/train/ 
-    train_labels: /home/ph/datasets/left_ventricle_volume/train.csv
-    validation_data: /home/ph/datasets/left_ventricle_volume/validation/
+    train_data: /Users/Breakend/Documents/datasets/sciencebowl2015/train/
+    train_labels: /Users/Breakend/Documents/datasets/sciencebowl2015/train.csv
+    validation_data: /Users/Breakend/Documents/datasets/sciencebowl2015/validate/
     sample_submission: /Users/Breakend/Documents/datasets/sciencebowl2015/sample_submission_validate.csv
