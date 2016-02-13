@@ -39,24 +39,29 @@ def build_cnn(input_var=None, numer_of_buckets=10):
             W=lasagne.init.GlorotUniform())
 
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
-    #network = lasagne.layers.DropoutLayer(network, p=.25)
+    network = lasagne.layers.DropoutLayer(network, p=.25)
 
     # Another convolution with 32 5x5 kernels, and another 2x2 pooling:
     network = lasagne.layers.Conv2DLayer(
             network, num_filters=96, filter_size=(3, 3),
             nonlinearity=lasagne.nonlinearities.rectify)
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
-    #network = lasagne.layers.DropoutLayer(network, p=.25)
+    network = lasagne.layers.DropoutLayer(network, p=.25)
 
     # Another convolution with 32 5x5 kernels, and another 2x2 pooling:
     network = lasagne.layers.Conv2DLayer(
             network, num_filters=128, filter_size=(2, 2),
             nonlinearity=lasagne.nonlinearities.rectify)
     network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
-    #network = lasagne.layers.DropoutLayer(network, p=.25)
-    network = lasagne.layers.FlattenLayer(network, 2)
+    network = lasagne.layers.DropoutLayer(network, p=.25)
 
     #should now be (30 x (64*64*10))
+    network = lasagne.layers.Conv2DLayer(
+            network, num_filters=256, filter_size=(2, 2),
+            nonlinearity=lasagne.nonlinearities.rectify)
+    network = lasagne.layers.MaxPool2DLayer(network, pool_size=(2, 2))
+    network = lasagne.layers.DropoutLayer(network, p=.25)
+    network = lasagne.layers.FlattenLayer(network, 2)
    
     print("After flatter, dims: {}".format(network.output_shape))
 
@@ -66,7 +71,7 @@ def build_cnn(input_var=None, numer_of_buckets=10):
     #print("After reshape, dims: {}".format(network.output_shape))
 
     network = lasagne.layers.LSTMLayer(
-        network, 712, grad_clipping=100,
+        network, 1024, grad_clipping=100,
         nonlinearity=lasagne.nonlinearities.tanh)
 
     #print("After lstm, dims: {}".format(network.output_shape))
@@ -74,7 +79,7 @@ def build_cnn(input_var=None, numer_of_buckets=10):
     # The l_forward layer creates an output of dimension (batch_size, SEQ_LENGTH, N_HIDDEN)
     # Since we are only interested in the final prediction, we isolate that quantity and feed it to the next layer.
     # The output of the sliced layer will then be of size (batch_size, N_HIDDEN)
-    #network = lasagne.layers.SliceLayer(network, -1, 1)
+    # network = lasagne.layers.SliceLayer(network, -1, 1)
     # print("After slice, dims: {}".format(network.output_shape))
 
     # A fully-connected layer of 1024 units with 50% dropout on its inputs:
@@ -202,6 +207,21 @@ def main(num_epochs=50):
             train_err_dia += train_fn_dia(inputs, diastole)
             train_batches += 1
             training_index += batch_size
+        
+        augmented_training_index = training_index
+        while (augmented_training_index < 1000):
+            gc.collect()
+            print("Augmented training index: %s" % augmented_training_index)
+            try:
+                inputs, systole, diastole = mriIter.get_augmented_data(augmented_training_index)
+            except Exception:
+                print("Skipping because failed to retrieve data")
+                print(traceback.format_exc())
+                augmented_training_index += 1
+                continue
+            train_err_sys += train_fn(inputs, systole)
+            train_err_dia += train_fn_dia(inputs, diastole)
+            augmented_training_index += 1
 
         # And a full pass over the validation data:
         val_err_sys = 0
@@ -251,9 +271,9 @@ def main(num_epochs=50):
             (val_acc_sys + val_acc_dia) / (val_batches) * .5))
 
 
-    # Optionally, you could now dump the network weights to a file like this:
-    np.savez('model-sys.npz', *lasagne.layers.get_all_param_values(network))
-    np.savez('model-dia.npz', *lasagne.layers.get_all_param_values(network_dia))
+        # Optionally, you could now dump the network weights to a file like this:
+        np.savez('model-sys.npz', *lasagne.layers.get_all_param_values(network))
+        np.savez('model-dia.npz', *lasagne.layers.get_all_param_values(network_dia))
     #
     # And load them again later on like this:
     # with np.load('model.npz') as f:

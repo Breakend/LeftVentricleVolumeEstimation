@@ -10,10 +10,29 @@ import scipy
 import numpy as np
 import dicom
 from skimage import io, transform
+from scipy import ndimage
 
 # Extra, non-specific data utilities
 def one_hot(size, value):
     return np.eye(size)[value]
+
+def rotation_augmentation(X, angle_range):
+    X_rot = np.copy(X)
+    angle = np.random.randint(-angle_range, angle_range)
+    for j in range(X.shape[0]):
+	X_rot[j, 0] = ndimage.rotate(X[j, 0], angle, reshape=False, order=1)
+    return X_rot
+
+def shift_augmentation(X, h_range, w_range):
+    X_shift = np.copy(X)
+    size = X.shape[2:]
+    h_random = np.random.rand() * h_range * 2. - h_range
+    w_random = np.random.rand() * w_range * 2. - w_range
+    h_shift = int(h_random * size[0])
+    w_shift = int(w_random * size[1])
+    for j in range(X.shape[0]):
+        X_shift[j, 0] = ndimage.shift(X[j, 0], (h_shift, w_shift), order=0)
+    return X_shift
 
 class MRIDataIterator(object):
     """ Iterates over the fMRI scans and returns batches of test and validation
@@ -27,9 +46,11 @@ class MRIDataIterator(object):
             self.labels = self.get_label_map(label_path)
         self.current_iter_position = 0
         self.PATIENT_RANGE_INCLUSIVE = (1, len(self.frames))
+        self.percent_validation = percent_validation
         self.last_training_index = int(percent_validation * self.PATIENT_RANGE_INCLUSIVE[1])
         self.histogram_bins = self.get_histogram_bins()
         self.memoized_data = {}
+        self.memoized_augmented = {}
 
     def get_histogram_bins(self, attribute_name='SliceLocation'):
         dicom_images = []
@@ -115,8 +136,10 @@ class MRIDataIterator(object):
 
         index = start_index
         data_array = np.zeros((30, end_index-start_index, 64, 64), dtype=np.float32)
+
 	if index in self.memoized_data:
             return self.memoized_data[index]
+
 	patient_frames = self.frames[index]
 	slices_locations_to_names = {}
 	i = 0
@@ -141,6 +164,19 @@ class MRIDataIterator(object):
 
         self.memoized_data[index] = ret_val
         return ret_val
+
+    def get_augmented_data(self, index):
+        orig_data_index = (index % (len(self.frames)*self.percent_validation - 1) + 1)
+        if not self.frames:
+            raise ValueError("Frames not set")
+        if orig_data_index not in self.memoized_data:
+            raise ValueError("Must memoize non-augmented frames first")
+        if index in self.memoized_augmented:
+            return self.memoized_augmented[index]
+        reg_data = self.memoized_data[orig_data_index]
+        augmented_data = rotation_augmentation(reg_data[0], 15)
+        augmented_data = shift_augmentation(augmented_data, 0.1, 0.1)
+        return (augmented_data, reg_data[1], reg_data[2])
 
     def retrieve_data_batch_by_layer_buckets(self, index=None):
         """ Returns a batch in format (30, num_bins-1, 64, 64) which
