@@ -149,7 +149,7 @@ def compose_functions(scope="default"):
 # more functions to better separate the code, but it wouldn't make it any
 # easier to read.
 
-def main(num_epochs=10):
+def main(num_epochs=50):
     # Load the dataset
     print("Creating data iterator...")
     with open("config.yml", 'r') as ymlfile:
@@ -209,7 +209,7 @@ def main(num_epochs=10):
         val_err_dia = 0
         val_acc_dia = 0
         val_batches = 0
-        while mriIter.has_more_validation_data(validation_index):
+        while mriIter.has_more_data(validation_index):
             gc.collect()
             print("Validation index %s" % validation_index)
             try:

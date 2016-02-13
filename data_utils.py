@@ -19,7 +19,7 @@ class MRIDataIterator(object):
     """ Iterates over the fMRI scans and returns batches of test and validation
     data. Needed to load into memory one batch at a time."""
 
-    def __init__(self, frame_root_path = None, label_path = None, percent_validation = .8):
+    def __init__(self, frame_root_path = None, label_path = None, percent_validation = .9):
         """Walk the directory and randomly split the data"""
         if frame_root_path:
             self.frames = self.get_frames(frame_root_path)
@@ -113,31 +113,26 @@ class MRIDataIterator(object):
         if self.PATIENT_RANGE_INCLUSIVE[0] > end_index > self.PATIENT_RANGE_INCLUSIVE[1]:
             raise ValueError("Index out of bounds for data.")
 
-        #TODO: fix this
         index = start_index
-        z = 0
         data_array = np.zeros((30, end_index-start_index, 64, 64), dtype=np.float32)
-        while index < end_index:
-            if index in self.memoized_data:
-                return self.memoized_data[index]
-            patient_frames = self.frames[index]
-            slices_locations_to_names = {}
-            i = 0
-            for sax_set in patient_frames:
-                slices_locations_to_names[int(dicom.read_file(sax_set[0]).SliceLocation)] = i
-                i += 1
-            median_array = slices_locations_to_names.keys()
-            median_array.sort()
-            median_index = slices_locations_to_names[median_array[len(slices_locations_to_names.keys())/2]]
-            sax_set = patient_frames[median_index]
-            i = 0
-            for path in sax_set:
-                f = dicom.read_file(path)
-                img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
-                data_array[i][0][:][:] = np.array(img, dtype=np.float32)
-                i += 1
-                z += 1
-                index += 1
+	if index in self.memoized_data:
+            return self.memoized_data[index]
+	patient_frames = self.frames[index]
+	slices_locations_to_names = {}
+	i = 0
+	for sax_set in patient_frames:
+	    slices_locations_to_names[int(dicom.read_file(sax_set[0]).SliceLocation)] = i
+	    i += 1
+	median_array = slices_locations_to_names.keys()
+	median_array.sort()
+	median_index = slices_locations_to_names[median_array[len(slices_locations_to_names.keys())/2]]
+	sax_set = patient_frames[median_index]
+	i = 0
+	for path in sax_set:
+	    f = dicom.read_file(path)
+	    img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
+	    data_array[i][0][:][:] = np.array(img, dtype=np.float32)
+	    i += 1
 
         if return_labels:
             ret_val = (data_array, np.array([np.int32(self.labels[index][0])]*(end_index-start_index), dtype=np.int32), np.array([np.int32(self.labels[index][1])]*(end_index -start_index), dtype=np.int32))
