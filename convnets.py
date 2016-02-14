@@ -99,12 +99,12 @@ def build_cnn(input_var=None, batch_size=10):
     return network
 
 
-def compose_functions(scope="default"):
+def compose_functions(scope="default", batch_size=50):
     # Prepare Theano variables for inputs and targets
     input_var = T.tensor4(scope + 'inputs')
     target_var = T.ivector(scope + 'targets')
     #x_printed = theano.printing.Print('this is a very important value')(target_var)
-    network = build_cnn(input_var)
+    network = build_cnn(input_var, batch_size)
 
     # Create a loss expression for training, i.e., a scalar objective we want
     # to minimize (for our multi-class problem, it is the cross-entropy loss):
@@ -156,19 +156,19 @@ def compose_functions(scope="default"):
 # more functions to better separate the code, but it wouldn't make it any
 # easier to read.
 
-def main(num_epochs=50):
+def main(num_epochs=500):
     # Load the dataset
     print("Creating data iterator...")
     with open("config.yml", 'r') as ymlfile:
         cfg = yaml.load(ymlfile)
     train_dir = cfg['dataset_paths']['train_data']
     train_labels = cfg['dataset_paths']['train_labels']
-    batch_size = 1
+    batch_size = 20
 
     mriIter = MRIDataIterator(train_dir, train_labels)
 
-    network, train_fn, val_fn = compose_functions("systole") #systole
-    network_dia, train_fn_dia, val_fn_dia = compose_functions("diastole")
+    network, train_fn, val_fn = compose_functions("systole", batch_size) #systole
+    network_dia, train_fn_dia, val_fn_dia = compose_functions("diastole", batch_size)
 
     if os.path.exists('model-sys.npz'):
         with np.load('model-sys.npz') as f:
@@ -194,35 +194,20 @@ def main(num_epochs=50):
         while mriIter.has_more_training_data(training_index + batch_size):
             gc.collect()
             print("Training index %s" % training_index)
-            try:
-                inputs, systole, diastole = mriIter.get_median_bucket_data(training_index, training_index + batch_size)
-            except Exception:
-                print("Skipping because failed to retrieve data")
-                print(traceback.format_exc())
-                training_index += 1
-                continue
-            # systole, diastole = targets
-            # import pdb;pdb.set_trace()
-            # print("Inputs shape: {}".format(inputs.shape))
+            inputs, systole, diastole = mriIter.get_median_bucket_data(training_index, batch_size)
             train_err_sys += train_fn(inputs, systole)
             train_err_dia += train_fn_dia(inputs, diastole)
-            train_batches += 1
+            train_batches += batch_size
             training_index += batch_size
 
         augmented_training_index = training_index
-        while (augmented_training_index < 1000):
+        while (augmented_training_index < 3000):
             gc.collect()
             print("Augmented training index: %s" % augmented_training_index)
-            try:
-                inputs, systole, diastole = mriIter.get_augmented_data(augmented_training_index)
-            except Exception:
-                print("Skipping because failed to retrieve data")
-                print(traceback.format_exc())
-                augmented_training_index += 1
-                continue
+            inputs, systole, diastole = mriIter.get_augmented_data(augmented_training_index, training_index - batch_size)
             train_err_sys += train_fn(inputs, systole)
             train_err_dia += train_fn_dia(inputs, diastole)
-            augmented_training_index += 1
+            augmented_training_index += batch_size
 
         # And a full pass over the validation data:
         val_err_sys = 0
@@ -233,33 +218,32 @@ def main(num_epochs=50):
         while mriIter.has_more_data(validation_index):
             gc.collect()
             print("Validation index %s" % validation_index)
-            try:
-                inputs, systole, diastole = mriIter.get_median_bucket_data(validation_index, validation_index + 1)
-            except Exception:
-                print("Skipping because failed to retrieve data")
-                print(traceback.format_exc())
-                validation_index += 1
-                continue
+            inputs, systole, diastole = mriIter.get_median_bucket_data(validation_index, batch_size)
             # systole, diastole = targets
             err, prediction = val_fn(inputs, systole)
-            prob_dist = np.cumsum(prediction[0])
-            # import pdb;pdb.set_trace()
-            v = np.array(range(prediction.shape[1]))
-            heavy = (v >= systole[0])
-            sq_dists = (prob_dist - heavy)**2
-            # print(prediction.shape)
-            val_err_sys += err
-            val_acc_sys += (sum(sq_dists) / 600.)
+            y = 0
+            for prob_set in prediction:
+                prob_dist = np.cumsum(prob_set)
+                v = np.array(range(prediction.shape[1]))
+                heavy = (v >= systole[y])
+                sq_dists = (prob_dist - heavy)**2
+                # print(prediction.shape)
+                val_err_sys += err
+                val_acc_sys += (sum(sq_dists) / 600.)
+                y += 1
 
             err, prediction = val_fn_dia(inputs, systole)
-            prob_dist = np.cumsum(prediction[0])
-            v = np.array(range(prediction.shape[1]))
-            heavy = (v >= diastole[0])
-            sq_dists = (prob_dist - heavy)**2
-            val_err_dia += err
-            val_acc_dia += (sum(sq_dists) / 600.)
-            val_batches += 1
-            validation_index += 1
+            y = 0
+            for prob_set in prediction:
+                prob_dist = np.cumsum(prob_set)
+                v = np.array(range(prediction.shape[1]))
+                heavy = (v >= diastole[y])
+                sq_dists = (prob_dist - heavy)**2
+                val_err_dia += err
+                val_acc_dia += (sum(sq_dists) / 600.)
+                y += 1
+            val_batches += batch_size
+            validation_index += batch_size
 
         # Then we print the results for this epoch:
         print("Epoch {} of {} took {:.3f}s".format(

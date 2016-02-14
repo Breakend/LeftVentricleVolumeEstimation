@@ -38,7 +38,7 @@ class MRIDataIterator(object):
     """ Iterates over the fMRI scans and returns batches of test and validation
     data. Needed to load into memory one batch at a time."""
 
-    def __init__(self, frame_root_path = None, label_path = None, percent_validation = .9):
+    def __init__(self, frame_root_path = None, label_path = None, percent_validation = .8):
         """Walk the directory and randomly split the data"""
         if frame_root_path:
             self.frames = self.get_frames(frame_root_path)
@@ -141,6 +141,7 @@ class MRIDataIterator(object):
         data_array = np.zeros((30*bucket_size, 1, 64, 64), dtype=np.float32)
         systolics = []
         diastolics = []
+        z = 0
 
         while index < start_index + bucket_size:
 
@@ -163,6 +164,7 @@ class MRIDataIterator(object):
             systolics.append(np.int32(self.labels[index][0]))
             diastolics.append(np.int32(self.labels[index][1]))
             index += 1
+            z += 1
 
         if return_labels:
             ret_val = (data_array, np.array(systolics, dtype=np.int32), np.array(diastolics, dtype=np.int32))
@@ -170,24 +172,24 @@ class MRIDataIterator(object):
             ret_val = data_array
 
         self.memoized_data[start_index] = ret_val
-        return ret_vals
+        return ret_val
 
-    def get_augmented_data(self, start_index):
-        orig_data_index = (start_index % (len(self.frames)*self.percent_validation - 1) + 1)
+    def get_augmented_data(self, start_index, last_train_index):
+        orig_data_index = start_index % (last_train_index - 1) 
         if not self.frames:
             raise ValueError("Frames not set")
         if orig_data_index not in self.memoized_data:
-            raise ValueError("Must memoize non-augmented frames first")
+            raise ValueError("Must memoize non-augmented frames first: %s" % orig_data_index)
         if start_index in self.memoized_augmented:
             return self.memoized_augmented[start_index]
 
-        reg_data = self.memoized_data[start_index]
+        reg_data = self.memoized_data[orig_data_index]
         augmented_data = rotation_augmentation(reg_data[0], 15)
         augmented_data = shift_augmentation(augmented_data, 0.1, 0.1)
 
         ret_val = (augmented_data, reg_data[1], reg_data[2])
         self.memoized_augmented[start_index] = ret_val
-        return ret_vals
+        return ret_val
 
     def retrieve_data_batch_by_layer_buckets(self, index=None):
         """ Returns a batch in format (30, num_bins-1, 64, 64) which

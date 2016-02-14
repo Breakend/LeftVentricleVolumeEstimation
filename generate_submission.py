@@ -13,7 +13,7 @@ from convnets import build_cnn
 
 def compose_prediction_functions(scope):
     input_var = T.tensor4(scope + 'inputs')
-    network = build_cnn(input_var)
+    network = build_cnn(input_var, 20)
 
     prediction = lasagne.layers.get_output(network)
     prediction_fn = theano.function([input_var], prediction)
@@ -44,7 +44,7 @@ sub_systole = {}
 sub_diastole = {}
 while mriIter.has_more_data(index):
     print("Index %s" % index)
-    inputs = mriIter.get_median_bucket_data(index, index+1, return_labels=False)
+    inputs = mriIter.get_median_bucket_data(index, 20, return_labels=False)
     sub_systole[index] = np.cumsum(systolic_prediction_fn(inputs)[0])
     sub_diastole[index] = np.cumsum(diastolic_prediction_fn(inputs)[0])
     index += 1

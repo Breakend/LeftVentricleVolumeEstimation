@@ -60,3 +60,4 @@ target/
 *.npz
 
 submission.csv
+config.yml
