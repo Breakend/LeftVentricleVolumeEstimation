@@ -45,9 +45,11 @@ sub_diastole = {}
 while mriIter.has_more_data(index):
     print("Index %s" % index)
     inputs = mriIter.get_median_bucket_data(index, 20, return_labels=False)
-    sub_systole[index] = np.cumsum(systolic_prediction_fn(inputs)[0])
-    sub_diastole[index] = np.cumsum(diastolic_prediction_fn(inputs)[0])
-    index += 1
+    i = 0
+    while i < 20:
+        sub_systole[index+i] = np.cumsum(systolic_prediction_fn(inputs)[i])
+        sub_diastole[index+i] = np.cumsum(diastolic_prediction_fn(inputs)[i])
+    index += 20
 
 # write to submission file
 print('Writing submission to file...')

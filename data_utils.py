@@ -161,8 +161,9 @@ class MRIDataIterator(object):
                 img = self.preproc(f.pixel_array.astype(np.float32) / np.max(f.pixel_array), 64, f.PixelSpacing)
                 data_array[z*30 + i][0][:][:] = np.array(img, dtype=np.float32)
                 i += 1
-            systolics.append(np.int32(self.labels[index][0]))
-            diastolics.append(np.int32(self.labels[index][1]))
+            if return_labels:
+                systolics.append(np.int32(self.labels[index][0]))
+                diastolics.append(np.int32(self.labels[index][1]))
             index += 1
             z += 1
 
@@ -175,7 +176,7 @@ class MRIDataIterator(object):
         return ret_val
 
     def get_augmented_data(self, start_index, last_train_index):
-        orig_data_index = start_index % (last_train_index - 1) 
+        orig_data_index = start_index % (last_train_index - 1)
         if not self.frames:
             raise ValueError("Frames not set")
         if orig_data_index not in self.memoized_data:
