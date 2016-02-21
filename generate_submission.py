@@ -8,15 +8,16 @@ import theano.tensor as T
 import theano
 import os
 
-from data_utils import MRIDataIterator
+from data_utils import MRIDataIterator, get_average_cdf
 from convnets import build_cnn
 
 def compose_prediction_functions(scope):
     input_var = T.tensor4(scope + 'inputs')
-    network = build_cnn(input_var, 20)
+    metadata_var = T.matrix(scope + 'metadatainputs')
+    network = build_cnn(input_var, 20, metadata_var)
 
     prediction = lasagne.layers.get_output(network)
-    prediction_fn = theano.function([input_var], prediction)
+    prediction_fn = theano.function([input_var, metadata_var], prediction)
     return network, prediction_fn
 
 with open("config.yml", 'r') as ymlfile:
@@ -44,11 +45,14 @@ sub_systole = {}
 sub_diastole = {}
 while mriIter.has_more_data(index):
     print("Index %s" % index)
-    inputs = mriIter.get_median_bucket_data(index, 20, return_labels=False)
+    inputs, metadata = mriIter.get_median_bucket_data(index, 20, return_labels=False, return_gender_age=True)
+    sys_pred = systolic_prediction_fn(inputs, metadata)
+    dia_pred = diastolic_prediction_fn(inputs, metadata)
     i = 0
     while i < 20:
-        sub_systole[index+i] = np.cumsum(systolic_prediction_fn(inputs)[i])
-        sub_diastole[index+i] = np.cumsum(diastolic_prediction_fn(inputs)[i])
+        sub_systole[index+i] = np.cumsum(sys_pred[i])
+        sub_diastole[index+i] = np.cumsum(dia_pred[i])
+        i += 1
     index += 20
 
 # write to submission file

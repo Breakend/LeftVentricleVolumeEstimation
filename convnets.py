@@ -16,7 +16,7 @@ import theano.tensor as T
 import lasagne
 from data_utils import MRIDataIterator
 
-def build_cnn(input_var=None, batch_size=10):
+def build_cnn(input_var=None, batch_size=5, meta_data_input_var=None):
     """number_of_buckets:   Is the number of histogram buckets we have created.
                             We treat these like layers for the convolution,
                             filling in the missing layers with 0s. We also throw
@@ -26,8 +26,10 @@ def build_cnn(input_var=None, batch_size=10):
     # Input layer, as usual:
     # (number of frames in cardiac cycle x number_of_buckets x image_width x image_height)
     # (30 x 10 x 64 x 64)
-    network = lasagne.layers.InputLayer(shape=(30*batch_size, 1, 64, 64),
+    network = lasagne.layers.InputLayer(shape=(None, 1, 64, 64),
                                         input_var=input_var)
+    # metadata = gender, age (in years), lower_bound, mean, upper_bound for age group
+    meta_data_network = lasagne.layers.InputLayer(shape=(None, 8), input_var=meta_data_input_var)
     # This time we do not apply input dropout, as it tends to work less well
     # for convolutional layers.
 
@@ -68,7 +70,7 @@ def build_cnn(input_var=None, batch_size=10):
     # need to get it to (1 x 30 x (64*64*10))
     # With batching need to somehow reshape from (30*batch_size, 1, 64, 64) to
     # (batch_size, 30, 1024)
-    network = lasagne.layers.ReshapeLayer(network, (batch_size, 30, [1]))
+    network = lasagne.layers.ReshapeLayer(network, (-1, 30, [1]))
 
     #print("After reshape, dims: {}".format(network.output_shape))
 
@@ -90,21 +92,49 @@ def build_cnn(input_var=None, batch_size=10):
             num_units=712,
             nonlinearity=lasagne.nonlinearities.tanh)
 
+    meta_data_network = lasagne.layers.DenseLayer(
+            lasagne.layers.dropout(meta_data_network, p=.5),
+            num_units=256,
+            nonlinearity=lasagne.nonlinearities.tanh)
+
+    meta_data_network = lasagne.layers.DenseLayer(
+            lasagne.layers.dropout(meta_data_network, p=.5),
+            num_units=512,
+            nonlinearity=lasagne.nonlinearities.tanh)
+
+    meta_data_network = lasagne.layers.DenseLayer(
+            lasagne.layers.dropout(meta_data_network, p=.5),
+            num_units=768,
+            nonlinearity=lasagne.nonlinearities.tanh)
+
     # And, finally, the 600-unit output layer with 50% dropout on its inputs:
     network = lasagne.layers.DenseLayer(
             lasagne.layers.dropout(network, p=.5),
+            num_units=768,
+            nonlinearity=lasagne.nonlinearities.tanh)
+
+    network = lasagne.layers.ElemwiseSumLayer([network, meta_data_network])
+
+    network = lasagne.layers.DenseLayer(
+            lasagne.layers.dropout(network, p=.5),
+            num_units=1024,
+            nonlinearity=lasagne.nonlinearities.softmax)
+
+    network = lasagne.layers.DenseLayer(
+            lasagne.layers.dropout(network, p=.25),
             num_units=600,
             nonlinearity=lasagne.nonlinearities.softmax)
 
     return network
 
 
-def compose_functions(scope="default", batch_size=50):
+def compose_functions(scope="default", batch_size=5):
     # Prepare Theano variables for inputs and targets
     input_var = T.tensor4(scope + 'inputs')
+    meta_data_input_var = T.matrix(scope + 'metadata_inputs')
     target_var = T.ivector(scope + 'targets')
     #x_printed = theano.printing.Print('this is a very important value')(target_var)
-    network = build_cnn(input_var, batch_size)
+    network = build_cnn(input_var, batch_size, meta_data_input_var)
 
     # Create a loss expression for training, i.e., a scalar objective we want
     # to minimize (for our multi-class problem, it is the cross-entropy loss):
@@ -143,10 +173,10 @@ def compose_functions(scope="default", batch_size=50):
 
     # Compile a function performing a training step on a mini-batch (by giving
     # the updates dictionary) and returning the corresponding training loss:
-    train_fn = theano.function([input_var, target_var], loss, updates=updates)
+    train_fn = theano.function([input_var, target_var, meta_data_input_var], loss, updates=updates)
 
     # Compile a second function computing the validation loss and accuracy:
-    val_fn = theano.function([input_var, target_var], [test_loss, test_prediction])
+    val_fn = theano.function([input_var, target_var, meta_data_input_var], [test_loss, test_prediction])
     return network, train_fn, val_fn
 
 
@@ -156,14 +186,14 @@ def compose_functions(scope="default", batch_size=50):
 # more functions to better separate the code, but it wouldn't make it any
 # easier to read.
 
-def main(num_epochs=500):
+def main(num_epochs=30):
     # Load the dataset
     print("Creating data iterator...")
     with open("config.yml", 'r') as ymlfile:
         cfg = yaml.load(ymlfile)
     train_dir = cfg['dataset_paths']['train_data']
     train_labels = cfg['dataset_paths']['train_labels']
-    batch_size = 20
+    batch_size = 5
 
     mriIter = MRIDataIterator(train_dir, train_labels)
 
@@ -194,19 +224,19 @@ def main(num_epochs=500):
         while mriIter.has_more_training_data(training_index + batch_size):
             gc.collect()
             print("Training index %s" % training_index)
-            inputs, systole, diastole = mriIter.get_median_bucket_data(training_index, batch_size)
-            train_err_sys += train_fn(inputs, systole)
-            train_err_dia += train_fn_dia(inputs, diastole)
+            inputs, systole, diastole, metadata = mriIter.get_median_bucket_data(training_index, batch_size, return_gender_age=True)
+            train_err_sys += train_fn(inputs, systole, metadata)
+            train_err_dia += train_fn_dia(inputs, diastole, metadata)
             train_batches += batch_size
             training_index += batch_size
 
         augmented_training_index = training_index
-        while (augmented_training_index < 3000):
+        while (augmented_training_index < 500):
             gc.collect()
             print("Augmented training index: %s" % augmented_training_index)
-            inputs, systole, diastole = mriIter.get_augmented_data(augmented_training_index, training_index - batch_size)
-            train_err_sys += train_fn(inputs, systole)
-            train_err_dia += train_fn_dia(inputs, diastole)
+            inputs, systole, diastole, metadata= mriIter.get_augmented_data(augmented_training_index, training_index - batch_size, return_gender_age=True)
+            train_err_sys += train_fn(inputs, systole, metadata)
+            train_err_dia += train_fn_dia(inputs, diastole, metadata)
             augmented_training_index += batch_size
 
         # And a full pass over the validation data:
@@ -218,9 +248,9 @@ def main(num_epochs=500):
         while mriIter.has_more_data(validation_index):
             gc.collect()
             print("Validation index %s" % validation_index)
-            inputs, systole, diastole = mriIter.get_median_bucket_data(validation_index, batch_size)
+            inputs, systole, diastole, metadata= mriIter.get_median_bucket_data(validation_index, batch_size, return_gender_age=True)
             # systole, diastole = targets
-            err, prediction = val_fn(inputs, systole)
+            err, prediction = val_fn(inputs, systole, metadata)
             y = 0
             for prob_set in prediction:
                 prob_dist = np.cumsum(prob_set)
@@ -232,7 +262,7 @@ def main(num_epochs=500):
                 val_acc_sys += (sum(sq_dists) / 600.)
                 y += 1
 
-            err, prediction = val_fn_dia(inputs, systole)
+            err, prediction = val_fn_dia(inputs, systole, metadata)
             y = 0
             for prob_set in prediction:
                 prob_dist = np.cumsum(prob_set)
@@ -254,7 +284,7 @@ def main(num_epochs=500):
         print("Validation Sum Sqrts Diastolic: {}".format(val_acc_dia))
         print("Train Err Systole: {}".format(train_err_sys))
         print("Train Err Diastole: {}".format(train_err_dia))
-        print("CRPS:\t\t{:.2f} %".format(
+        print("CRPS:\t\t{:.6f} %".format(
             (val_acc_sys + val_acc_dia) / (val_batches) * .5))
 
 
